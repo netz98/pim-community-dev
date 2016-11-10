@@ -1,5 +1,8 @@
 #!groovy
 
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+
 stage 'Prepare build'
 node {
     step([$class: 'GitHubSetCommitStatusBuilder'])
@@ -45,6 +48,20 @@ userInput = input(message: 'Launch acceptance tests?', parameters: [
 node {
     unstash "project_files"
 
+    phpBinary = 'php'
+    if ('5.6' != userInput['php_version']) {
+        phpBinary += userInput['php_version']
+
+        composerFile = readFile('composer.json')
+        composerFile = updateComposerFile(composerFile)
+
+        writeFile file: 'composer.json', text: composerFile
+    } else {
+        phpBinary += '5'
+    }
+
+    sh "${phpBinary} /usr/local/bin/composer update -o -n --no-progress --prefer-dist --ignore-platform-reqs"
+
     sh "/usr/bin/php7.0 /var/lib/distributed-ci/dci-master/bin/build" +
         " -p " + userInput['php_version'] +
         " -m " + userInput['mysql_version'] +
@@ -62,4 +79,21 @@ node {
     step([$class: 'ArtifactArchiver', allowEmptyArchive: true, artifacts: 'app/build/screenshots/*.png,app/build/logs/consumer/*.log', defaultExcludes: false, excludes: null])
     step([$class: 'JUnitResultArchiver', testResults: 'app/build/logs/behat/*.xml'])
     step([$class: 'GitHubCommitStatusSetter', resultOnFailure: 'FAILURE', statusMessage: [content: 'Build finished']])
+}
+
+/**
+ * Updates the composer.json file according to user settings.
+ *
+ * @param String composerFile
+ *
+ * @return String
+ */
+def static updateComposerFile(composerFile)
+{
+    JsonSlurper jsonSlurper = new JsonSlurper();
+    def parsedComposerFile = jsonSlurper.parseText(composerFile);
+
+    parsedComposerFile['require-dev']['alcaeus/mongo-php-adapter'] = '1.0.*';
+
+    return JsonOutput.prettyPrint(JsonOutput.toJson(parsedComposerFile));
 }
